@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package tasker;
+
+option go_package = "github.com/wolves-fc/tasker/gen/proto/tasker";
+
+// TaskerService defines how a Foreman interacts with a Crew and its jobs.
+service TaskerService {
+  // StartJob creates and starts a new job.
+  rpc StartJob(StartJobRequest) returns (StartJobResponse);
+  // StopJob triggers a running job to stop.
+  rpc StopJob(StopJobRequest) returns (StopJobResponse);
+  // ArchiveJob moves a stopped job to the archive.
+  rpc ArchiveJob(ArchiveJobRequest) returns (ArchiveJobResponse);
+  // GetArchivedJobs returns the archived jobs.
+  rpc GetArchivedJobs(GetArchivedJobsRequest) returns (GetArchivedJobsResponse);
+  // WatchJobs streams all active jobs, archived count and allows for syncing across multiple Foreman.
+  rpc WatchJobs(WatchJobsRequest) returns (stream WatchJobsResponse);
+  // AttachJob opens a bidirectional stream for job output (stdout/stderr) and optional input (stdin).
+  rpc AttachJob(stream AttachJobRequest) returns (stream AttachJobResponse);
+}
+
+// JobPhase represents the lifecycle of a job.
+enum JobPhase {
+  // Unknown or unset phase.
+  JOB_PHASE_UNSPECIFIED = 0;
+  // Job is running.
+  JOB_PHASE_RUNNING = 1;
+  // Job has exited or been stopped.
+  JOB_PHASE_STOPPED = 2;
+  // Job has been archived.
+  JOB_PHASE_ARCHIVED = 3;
+}
+
+// ResourceUsage holds current resource consumption.
+message ResourceUsage {
+  // CPU usage in cores.
+  float cpu = 1;
+  // Memory usage in MB.
+  uint32 memory = 2;
+  // IO read rate in MB/s.
+  uint32 io_read = 3;
+  // IO write rate in MB/s.
+  uint32 io_write = 4;
+}
+
+// ResourceLimits holds optional resource limits for a job.
+message ResourceLimits {
+  // CPU limit in cores.
+  optional float cpu = 1;
+  // Memory limit in MB.
+  optional uint32 memory = 2;
+  // IO read limit in MB/s.
+  optional uint32 io_read = 3;
+  // IO write limit in MB/s.
+  optional uint32 io_write = 4;
+}
+
+// Job represents a managed process.
+message Job {
+  // Unique ID.
+  string id = 1;
+  // Assigned name.
+  string name = 2;
+  // User who started this job.
+  string owner = 3;
+  // Linux command to run.
+  string command = 4;
+  // Current lifecycle phase.
+  JobPhase phase = 5;
+  // Current resource consumption.
+  ResourceUsage usage = 6;
+  // Resource limits (optional).
+  ResourceLimits limits = 7;
+}
+
+// StartJobRequest contains what is needed to create and start a job.
+message StartJobRequest {
+  // Assigned name.
+  string name = 1;
+  // Linux command to run.
+  string command = 2;
+  // Resource limits (optional).
+  ResourceLimits limits = 3;
+}
+
+// StartJobResponse contains the started job.
+message StartJobResponse {
+  Job job = 1;
+}
+
+// StopJobRequest identifies the job to stop.
+message StopJobRequest {
+  string id = 1;
+}
+
+// StopJobResponse contains the stopped job.
+message StopJobResponse {
+  Job job = 1;
+}
+
+// ArchiveJobRequest identifies the job to archive.
+message ArchiveJobRequest {
+  string id = 1;
+}
+
+// ArchiveJobResponse contains the archived job.
+message ArchiveJobResponse {
+  Job job = 1;
+}
+
+// GetArchivedJobsRequest has no parameters.
+message GetArchivedJobsRequest {}
+
+// GetArchivedJobsResponse contains the archived jobs.
+message GetArchivedJobsResponse {
+  repeated Job jobs = 1;
+}
+
+// WatchJobsRequest has no parameters.
+message WatchJobsRequest {}
+
+// WatchJobsResponse contains job updates for a Crew.
+message WatchJobsResponse {
+  // Signals whether this is a sync.
+  bool sync = 1;
+  // Active jobs.
+  repeated Job jobs = 2;
+  // Total number of archived jobs for the Crew.
+  uint32 archived_count = 3;
+}
+
+// AttachJobRequest is a Foreman message on the AttachJob stream.
+message AttachJobRequest {
+  oneof payload {
+    // Job ID to attach to.
+    string id = 1;
+    // Raw bytes to write to the job's stdin.
+    bytes stdin = 2;
+  }
+}
+
+// AttachJobResponse is a Crew message on the AttachJob stream.
+message AttachJobResponse {
+  // Raw output bytes from the job's stdout/stderr.
+  bytes data = 1;
+}
