@@ -4,20 +4,16 @@ package tasker;
 
 option go_package = "github.com/wolves-fc/tasker/gen/proto/tasker";
 
-// TaskerService defines how a Foreman interacts with a Crew and its jobs.
+// TaskerService defines RPCs for managing jobs on a server.
 service TaskerService {
   // StartJob creates and starts a new job.
   rpc StartJob(StartJobRequest) returns (StartJobResponse);
   // StopJob triggers a running job to stop.
   rpc StopJob(StopJobRequest) returns (StopJobResponse);
-  // ArchiveJob moves a stopped job to the archive.
-  rpc ArchiveJob(ArchiveJobRequest) returns (ArchiveJobResponse);
-  // GetArchivedJobs returns the archived jobs.
-  rpc GetArchivedJobs(GetArchivedJobsRequest) returns (GetArchivedJobsResponse);
-  // WatchJobs streams all active jobs, archived count and allows for syncing across multiple Foreman.
-  rpc WatchJobs(WatchJobsRequest) returns (stream WatchJobsResponse);
-  // AttachJob opens a bidirectional stream for job output (stdout/stderr) and optional input (stdin).
-  rpc AttachJob(stream AttachJobRequest) returns (stream AttachJobResponse);
+  // GetJob returns a job.
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  // AttachJob opens a stream for job output (stdout/stderr).
+  rpc AttachJob(AttachJobRequest) returns (stream AttachJobResponse);
 }
 
 // JobPhase represents the lifecycle of a job.
@@ -28,20 +24,6 @@ enum JobPhase {
   JOB_PHASE_RUNNING = 1;
   // Job has exited or been stopped.
   JOB_PHASE_STOPPED = 2;
-  // Job has been archived.
-  JOB_PHASE_ARCHIVED = 3;
-}
-
-// ResourceUsage holds current resource consumption.
-message ResourceUsage {
-  // CPU usage in cores.
-  float cpu = 1;
-  // Memory usage in MB.
-  uint32 memory = 2;
-  // IO read rate in MB/s.
-  uint32 io_read = 3;
-  // IO write rate in MB/s.
-  uint32 io_write = 4;
 }
 
 // ResourceLimits holds optional resource limits for a job.
@@ -60,28 +42,22 @@ message ResourceLimits {
 message Job {
   // Unique ID.
   string id = 1;
-  // Assigned name.
-  string name = 2;
   // User who started this job.
-  string owner = 3;
+  string owner = 2;
   // Linux command to run.
-  string command = 4;
+  string command = 3;
   // Current lifecycle phase.
-  JobPhase phase = 5;
-  // Current resource consumption.
-  ResourceUsage usage = 6;
+  JobPhase phase = 4;
   // Resource limits (optional).
-  ResourceLimits limits = 7;
+  ResourceLimits limits = 5;
 }
 
 // StartJobRequest contains what is needed to create and start a job.
 message StartJobRequest {
-  // Assigned name.
-  string name = 1;
   // Linux command to run.
-  string command = 2;
+  string command = 1;
   // Resource limits (optional).
-  ResourceLimits limits = 3;
+  ResourceLimits limits = 2;
 }
 
 // StartJobResponse contains the started job.
@@ -99,48 +75,22 @@ message StopJobResponse {
   Job job = 1;
 }
 
-// ArchiveJobRequest identifies the job to archive.
-message ArchiveJobRequest {
+// GetJobRequest identifies the job to get.
+message GetJobRequest {
   string id = 1;
 }
 
-// ArchiveJobResponse contains the archived job.
-message ArchiveJobResponse {
+// GetJobResponse contains the requested job.
+message GetJobResponse {
   Job job = 1;
 }
 
-// GetArchivedJobsRequest has no parameters.
-message GetArchivedJobsRequest {}
-
-// GetArchivedJobsResponse contains the archived jobs.
-message GetArchivedJobsResponse {
-  repeated Job jobs = 1;
-}
-
-// WatchJobsRequest has no parameters.
-message WatchJobsRequest {}
-
-// WatchJobsResponse contains job updates for a Crew.
-message WatchJobsResponse {
-  // Signals whether this is a sync.
-  bool sync = 1;
-  // Active jobs.
-  repeated Job jobs = 2;
-  // Total number of archived jobs for the Crew.
-  uint32 archived_count = 3;
-}
-
-// AttachJobRequest is a Foreman message on the AttachJob stream.
+// AttachJobRequest identifies the job to attach to.
 message AttachJobRequest {
-  oneof payload {
-    // Job ID to attach to.
-    string id = 1;
-    // Raw bytes to write to the job's stdin.
-    bytes stdin = 2;
-  }
+  string id = 1;
 }
 
-// AttachJobResponse is a Crew message on the AttachJob stream.
+// AttachJobResponse is output data from the requested job.
 message AttachJobResponse {
   // Raw output bytes from the job's stdout/stderr.
   bytes data = 1;
