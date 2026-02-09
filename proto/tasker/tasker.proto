@@ -44,20 +44,24 @@ message Job {
   string id = 1;
   // User who started this job.
   string owner = 2;
-  // Linux command to run.
+  // Path to the executable.
   string command = 3;
+  // Arguments to the executable.
+  repeated string args = 4;
   // Current lifecycle phase.
-  JobPhase phase = 4;
+  JobPhase phase = 5;
   // Resource limits (optional).
-  ResourceLimits limits = 5;
+  ResourceLimits limits = 6;
 }
 
 // StartJobRequest contains what is needed to create and start a job.
 message StartJobRequest {
-  // Linux command to run.
+  // Path to the executable.
   string command = 1;
+  // Arguments to the executable.
+  repeated string args = 2;
   // Resource limits (optional).
-  ResourceLimits limits = 2;
+  ResourceLimits limits = 3;
 }
 
 // StartJobResponse contains the started job.

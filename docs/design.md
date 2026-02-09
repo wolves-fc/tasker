@@ -65,17 +65,56 @@ For simplicity, each server run will not persist jobs or data to the next run.
 
 #### Creation
 
-All jobs will be put under a cgroup. A user can also add cpu/memory/io limits to the cgroup in their `StartJob` request.
+All jobs will be put under a cgroup. A user can also add cpu/memory/io limits to the cgroup in their `StartJob` request. Each subprocess of the main process will be assigned the same process group id. Here's some pseudocode of the creating a process in a cgroup:
 
-Each subprocess of the main process will be assigned the same process group id.
+```
+// cg := create c group (optional limits)
+...
+// cgFD := open fd to c group directory
+...
+cmd = exec.Command(command, args...)
+// set pgid (allows sigterm to whole group id)
+// set c group fd so the process gets added to the c group
+cmd.SysProcAttr = &syscall.SysProcAttr{
+    Setpgid:     true,
+	UseCgroupFD: true,
+	CgroupFD:    cgFD,
+}
+// handle piping stdout and such
+...
+// start the command
+cmd.Start()
+```
 
 #### Output
 
-Job output is a combination of the stdout and stderr to a pipe and will be stored as raw bytes. There will be an async read on the process that will store the read data into the job's output buffer and then attempt to write the read data to a channel.
+Job output is a combination of the stdout and stderr to a pipe and will be stored as raw bytes. There will be an async read on the process that will store the read data into the job's output buffer.
 
-When an `AttachJob` stream is initialized, the job first sends its output buffer to catch the client up (recalling).
+When an `AttachJob` stream is initialized, the job will add a watcher for that client stream. The watcher will keep track of where it has read on the jobs output buffer. The watcher will have a `watcher.nextChunk()` method that it waits on. Here is some pseudocode of the watcher:
 
-After that, the attach is spawned into an async process that will listen to the job output channel and send anything that comes across it to the `AttachJob` stream. There can be many attach processes that listen on the same job output channel.
+```
+job:
+    append chunk to output
+    broadcast activate to all watchers
+
+attach:
+    defer cancel watchers (activate)
+    watcher loop
+
+watcher loop:
+    chunk, ok = watcher.nextChunk(ctx)
+    if !ok then return (job exited or client disconnected)
+    stream.send(line)
+
+nextChunk:
+    while pos >= job.output.len
+        if cancelled or job done return nil, false
+        wait for watcher activate
+
+    line = job.output[pos]
+    pos++
+    return line, true
+```
 
 #### End
 
@@ -85,17 +124,16 @@ When a stop is triggered, a sigterm will be sent to the process group. This will
 
 Each job will be owned by a user (extracted from the cert CN).
 
-After a job is started it can be managed (stop, archive, and attach). All users will be able to see every job. There will be two avenues for managing jobs based on user roles (extracted from the cert OU).
+After a job is started it can be managed (stop, get, and attach). There will be two avenues for managing jobs based on user roles (extracted from the cert OU).
 
 - **user:** can only manage jobs they started.
 - **admin:** can manage any job.
 
 ## CLI
 
-The client cli will provide these options that abstract the underlying rpc calls:
+The client CLI will provide these commands that abstract the underlying RPC calls:
 
 - **start:** send a `StartJob` unary
 - **stop:** send a `StopJob` unary
+- **get:** send a `GetJob` unary
 - **attach:** start an `AttachJob` stream to view output (with recall)
-- **detach:** close an `AttachJob` stream
-- **get job:** send a `GetJob` unary
