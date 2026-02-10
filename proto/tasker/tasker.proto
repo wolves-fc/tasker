@@ -32,10 +32,18 @@ message ResourceLimits {
   optional float cpu = 1;
   // Memory limit in MB.
   optional uint32 memory = 2;
-  // IO read limit in MB/s.
-  optional uint32 io_read = 3;
-  // IO write limit in MB/s.
-  optional uint32 io_write = 4;
+  // IO limits for a block device.
+  optional IOLimits io = 3;
+}
+
+// IOLimits holds IO limits for a block device.
+message IOLimits {
+  // Block device path.
+  string device = 1;
+  // Read limit in MB/s.
+  optional uint32 read = 2;
+  // Write limit in MB/s.
+  optional uint32 write = 3;
 }
 
 // Job represents a managed process.

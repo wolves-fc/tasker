@@ -1,4 +1,4 @@
-# Tasker Foreman
+# Tasker
 
 ## Docs
 
