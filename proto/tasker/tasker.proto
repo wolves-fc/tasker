@@ -22,8 +22,10 @@ enum JobPhase {
   JOB_PHASE_UNSPECIFIED = 0;
   // Job is running.
   JOB_PHASE_RUNNING = 1;
-  // Job has exited or been stopped.
+  // Job was manually stopped.
   JOB_PHASE_STOPPED = 2;
+  // Job exited on its own.
+  JOB_PHASE_COMPLETED = 3;
 }
 
 // ResourceLimits holds optional resource limits for a job.

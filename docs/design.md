@@ -19,7 +19,13 @@ This is a high level design document for a Linux job service called Tasker.
     - [Authorization](#authorization)
     - [Output](#output)
     - [Cleanup](#cleanup)
-- [CLI](#cli)
+- [Taskerctl](#taskerctl)
+    - [Usage](#usage)
+    - [Start](#start)
+    - [Stop](#stop)
+    - [Get](#get)
+    - [Attach](#attach)
+    - [Cert](#cert)
 
 ## Dependencies
 
@@ -31,6 +37,7 @@ Tasker will use the current (at this time) Go revision [v1.25.7](https://go.dev/
 | ----------- | ----------------------- | ------------------------------------------------------------- |
 | grpc-go     | gRPC implementation     | [GitHub link](https://github.com/grpc/grpc-go)                |
 | protobuf-go | protobuf implementation | [GitHub link](https://github.com/protocolbuffers/protobuf-go) |
+| uuid        | uuid generation         | [GitHub link](github.com/google/uuid)                         |
 | cobra       | cli flag toolkit        | [GitHub link](https://github.com/spf13/cobra)                 |
 
 ### Tools
@@ -121,7 +128,7 @@ cmd.SysProcAttr = &syscall.SysProcAttr{
 cmd.Start()
 ```
 
-Each job will be assigned a 16 byte uuid in a `4-2-2-2-6` bytes format e.g. `a1b2c3d4-e5f6-7890-abcd-ef1234567890`
+Each job will be assigned a uuid for their id.
 
 ### Authorization
 
@@ -143,36 +150,142 @@ When an `AttachJob` stream is initialized, the job will add a watcher for that c
 ```
 job:
     append chunk to output
-    broadcast activate to all watchers
+    sync.Cond.broadcast
 
 attach:
-    defer cancel watchers (activate)
+    defer sync.Cond.activate
     watcher loop
 
 watcher loop:
     chunk, ok = watcher.nextChunk(ctx)
     if !ok then return (job exited or client disconnected)
-    stream.send(line)
+    stream.send(chunk)
 
 nextChunk:
     while pos >= job.output.len
         if cancelled or job done return nil, false
-        wait for watcher activate
+        sync.Cond.wait
 
-    line = job.output[pos]
+    chunk = job.output[pos]
     pos++
-    return line, true
+    return chunk, true
 ```
 
 ### Cleanup
 
-When a stop is triggered, a sigterm will be sent to the process group. This will be followed up by a cgroup kill if needed.
+When a stop is triggered, a cgroup kill will happen.
 
-## CLI
+## Taskerctl
 
-The client CLI will provide these commands that abstract the underlying RPC calls:
+Taskerctl will provide commands to generate Tasker certs and manage jobs.
 
-- **start:** send a `StartJob` unary
-- **stop:** send a `StopJob` unary
-- **get:** send a `GetJob` unary
-- **attach:** start an `AttachJob` stream to view output (with recall)
+### Usage
+
+```
+CLI client for Tasker job service
+
+Usage:
+  taskerctl [command]
+
+Available Commands:
+  attach      Attach to a job's output
+  cert        Manage TLS certificates
+  get         Get a job's status
+  help        Help about any command
+  start       Start a new job
+  stop        Stop a running job
+
+Flags:
+  -h, --help   help for taskerctl
+
+Use "taskerctl [command] --help" for more information about a command.
+```
+
+### Start
+
+Start a new job on the server. Resource limits are optional.
+
+```
+$ taskerctl start -u wolf -a localhost:50051 /usr/bin/sleep 60
+id: 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+owner: wolf
+command: /usr/bin/sleep
+args: [60]
+phase: running
+```
+
+With resource limits:
+
+```
+$ taskerctl start -u wolf -a localhost:50051 -c 0.5 -m 512 -d /dev/sda -r 100 -w 50 /usr/bin/my-app
+id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
+owner: wolf
+command: /usr/bin/my-app
+args: []
+phase: running
+cpu limit: 0.50 cores
+memory limit: 512 MB
+io device: /dev/sda
+io read limit: 100 MB/s
+io write limit: 50 MB/s
+```
+
+### Stop
+
+Stop a running job. Stopping a stopped/completed job is idempotent (it will return the job details but no error).
+
+```
+$ taskerctl stop -u wolf -a localhost:50051 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+id: 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+owner: wolf
+command: /usr/bin/sleep
+args: [60]
+phase: stopped
+```
+
+### Get
+
+Get a job's current status.
+
+```
+$ taskerctl get -u wolf -a localhost:50051 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+id: 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+owner: wolf
+command: /usr/bin/sleep
+args: [60]
+phase: completed
+```
+
+### Attach
+
+Attach to a job's output stream. Streams stdout and stderr (with recall of past data).
+
+```
+$ taskerctl attach -u wolf -a localhost:50051 a1b2c3d4-e5f6-7890-abcd-ef1234567890
+<data stream>
+```
+
+### Cert
+
+Generate TLS certificates for Tasker.
+
+#### Cert CA
+
+```
+taskerctl cert ca
+```
+
+#### Cert Client
+
+```
+# admin role
+taskerctl cert client -u wolf -r admin
+# user role
+taskerctl cert client -u wolfjr -r user
+```
+
+#### Cert Server
+
+```
+taskerctl cert server -n tasker1 -H localhost,192.168.1.1
+```
