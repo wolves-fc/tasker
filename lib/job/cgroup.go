@@ -16,6 +16,8 @@ const (
 	cgroupTaskerDir = "/sys/fs/cgroup/tasker"
 	// cpuPeriod is the CPU period in microseconds.
 	cpuPeriod = 100000
+	// maxPIDs is the maximum number of concurrent processes per job.
+	maxPIDs = 1000
 )
 
 // Init creates the tasker cgroup and enables controllers.
@@ -103,6 +105,10 @@ func createCgroup(id string, limits Limits) (fd int, err error) {
 		); err != nil {
 			return -1, fmt.Errorf("set io.max: %w", err)
 		}
+	}
+
+	if err = writeCgroup(filepath.Join(dir, "pids.max"), strconv.Itoa(maxPIDs)); err != nil {
+		return -1, fmt.Errorf("set pids.max: %w", err)
 	}
 
 	fd, err = unix.Open(dir, unix.O_RDONLY|unix.O_DIRECTORY, 0)
