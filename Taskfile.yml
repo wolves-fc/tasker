@@ -1,0 +1,90 @@
+version: "3"
+
+tasks:
+  default:
+    desc: Run all checks and build
+    cmds:
+      - task: check
+      - task: build
+
+  check:
+    desc: Run all checks (format, lint, test, vulnerability, verify)
+    cmds:
+      - task: format
+      - task: lint
+      - task: test
+      - task: vulnerability
+      - task: verify
+
+  format:
+    desc: Format code with gofmt
+    cmds:
+      - go fmt ./...
+
+  lint:
+    desc: Run linters
+    cmds:
+      - golangci-lint run ./...
+    preconditions:
+      - sh: command -v golangci-lint
+        msg: |
+          golangci-lint not installed.
+          run 'task install-tools' to install it.
+
+  test:
+    desc: Run tests with race detector and coverage
+    cmds:
+      - go test -race -cover ./...
+
+  test:verbose:
+    desc: Run tests with verbose output, race detector and coverage
+    cmds:
+      - go test -v -race -cover ./...
+
+  vulnerability:
+    desc: Check for known security vulnerabilities
+    cmds:
+      - govulncheck ./...
+    preconditions:
+      - sh: command -v govulncheck
+        msg: |
+          govulncheck not installed.
+          run 'task install-tools' to install it.
+
+  verify:
+    desc: Verify dependencies and checksums
+    cmds:
+      - go mod verify
+
+  build:
+    desc: Build all packages and binaries
+    cmds:
+      - go build ./...
+
+  build:race:
+    desc: Build all packages and binaries with race detector
+    cmds:
+      - go build -race ./...
+
+  proto:
+    desc: Generate Go code from proto schema using buf
+    dir: proto
+    cmds:
+      - command -v buf >/dev/null || go install github.com/bufbuild/buf/cmd/buf@latest
+      - buf generate
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf bin/
+
+  tidy:
+    desc: Tidy go.mod and go.sum
+    cmds:
+      - go mod tidy
+
+  install-tools:
+    desc: Install required development tools
+    cmds:
+      - go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+      - go install golang.org/x/vuln/cmd/govulncheck@latest
