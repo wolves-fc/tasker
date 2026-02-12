@@ -17,7 +17,8 @@ import (
 )
 
 // Serve starts a gRPC server with mutual TLS on the given address.
-func Serve(svc taskerpb.TaskerServiceServer, certDir, name, addr string) error {
+// It blocks until the context is cancelled, then gracefully stops the server.
+func Serve(ctx context.Context, svc taskerpb.TaskerServiceServer, certDir, name, addr string) error {
 	tlsCfg, err := tls.NewServerCfg(certDir, name)
 	if err != nil {
 		return fmt.Errorf("load TLS server config: %w", err)
@@ -36,6 +37,9 @@ func Serve(svc taskerpb.TaskerServiceServer, certDir, name, addr string) error {
 	)
 
 	taskerpb.RegisterTaskerServiceServer(srv, svc)
+	context.AfterFunc(ctx, func() {
+		srv.Stop()
+	})
 
 	return srv.Serve(listener)
 }
