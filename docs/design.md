@@ -33,7 +33,7 @@ This is a high level design document for a Linux job service called Tasker.
 
 ## Dependencies
 
-Tasker will use the current (at this time) Go revision [v1.26.0](https://go.dev/dl/). These are the planned dependencies broken down into direct Go libraries and tools:
+Tasker will use the current (at this time) Go revision [v1.25.7](https://go.dev/dl/). These are the planned dependencies broken down into direct Go libraries and tools:
 
 ### Libraries
 
