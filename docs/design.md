@@ -9,35 +9,40 @@ This is a high level design document for a Linux job service called Tasker.
     - [Tools](#tools)
 - [Authentication](#authentication)
     - [TLS Configuration](#tls-configuration)
-    - [TLS CA and Cert Generation](#tls-ca-and-cert-generation)
+    - [TLS CA and Certs](#tls-ca-and-certs)
+        - [Certs Directory](#certs-directory)
 - [Jobs](#jobs)
     - [Resource Limits](#resource-limits)
         - [CPU](#cpu)
         - [Memory](#memory)
         - [IO](#io)
+        - [PIDS](#pids)
     - [Creation](#creation)
     - [Authorization](#authorization)
     - [Output](#output)
     - [Cleanup](#cleanup)
 - [Taskerctl](#taskerctl)
     - [Usage](#usage)
-    - [Start](#start)
-    - [Stop](#stop)
-    - [Get](#get)
-    - [Attach](#attach)
     - [Cert](#cert)
+    - [Job](#job)
+        - [Attach](#attach)
+        - [Get](#get)
+        - [Start](#start)
+        - [Stop](#stop)
+    - [Server](#server)
 
 ## Dependencies
 
-Tasker will use the current (at this time) Go revision [v1.25.7](https://go.dev/dl/). These are the planned dependencies broken down into direct Go libraries and tools:
+Tasker will use the current (at this time) Go revision [v1.26.0](https://go.dev/dl/). These are the planned dependencies broken down into direct Go libraries and tools:
 
 ### Libraries
 
 | Lib         | Description             | Repo                                                          |
 | ----------- | ----------------------- | ------------------------------------------------------------- |
+| sys         | syscall replacement     | [Google Git link](https://go.googlesource.com/sys)            |
 | grpc-go     | gRPC implementation     | [GitHub link](https://github.com/grpc/grpc-go)                |
 | protobuf-go | protobuf implementation | [GitHub link](https://github.com/protocolbuffers/protobuf-go) |
-| uuid        | uuid generation         | [GitHub link](github.com/google/uuid)                         |
+| uuid        | uuid generation         | [GitHub link](https://github.com/google/uuid)                 |
 | cobra       | cli flag toolkit        | [GitHub link](https://github.com/spf13/cobra)                 |
 
 ### Tools
@@ -56,15 +61,33 @@ Mutual TLS will be used to authenticate client and server interactions.
 - **Ciphers:** AES-128-GCM, AES-256-GCM, ChaCha20-Poly1305 (selected by Go TLS)
 - **Keys:** ECDSA P-256
 
-### TLS CA and Cert Generation
+### TLS CA and Certs
 
-There will be an internal tool provided to generate a Tasker CA and client/server certs. For simplicity, all of these will be written to/read from `/etc/tasker`.
+There will be sample CA, client and server certs provided in the `certs` directory on the repo. By default [Taskerctl](#taskerctl) uses this directory to look for certs.
 
-The cert generator will add in a CN, O, and OU for a client:
+Along with that, there will be a tool to generate Tasker CA and client/server certs: [Taskerctl Cert](#cert).
+
+A Tasker Client cert needs to contain CN, O, and OU:
 
 - **CN:** user name
-- **O:** Tasker
-- **OU:** user or admin
+- **O:** `Tasker`
+- **OU:** `user` or `admin`
+
+A Tasker Server cert needs to contain CN, O, and OU:
+
+- **CN:** server name
+- **O:** `Tasker`
+- **OU:** `server`
+
+#### Certs Directory
+
+By default `certs` is the directory where certs are looked for.
+
+- The CA will be looked for at `certs/ca.<crt|key>`.
+- When a user does `taskerctl job stop -u wolf...` this will look for `certs/client/wolf.<crt|key>`.
+- When a user does `taskerctl server -n wolfpack1...` this will look for `certs/server/wolfpack1.<crt|key>`.
+
+Optionally you can change the certs directory when using [Taskerctl](#taskerctl).
 
 ## Jobs
 
@@ -74,7 +97,9 @@ For simplicity, each server run will not persist jobs or data to the next run.
 
 ### Resource Limits
 
-A user can add cpu/memory/io limits to the cgroup in their `StartJob` request. If a limit is not provided then the cgroup defaults to max for that resource type.
+A user can add cpu, memory, and/or io limits to the cgroup in their [Start](#start) command. If a limit is not provided then the cgroup defaults to max for that resource type. There also will be a hard limit of 1000 concurrent processes for a job.
+
+`cpu`, `memory`, `io`, `pids` controllers will be enabled on the cgroups root and Tasker subtree.
 
 #### CPU
 
@@ -105,30 +130,31 @@ wbps = <write> * 1024 * 1024
 io.max = <device> rbps=<rbps> wbps=<wbps>
 ```
 
-### Creation
-
-All jobs will be put under a cgroup. Each subprocess of the main process will be assigned the same process group id. Here's some pseudocode of creating a process in a cgroup:
+#### PIDS
 
 ```
-// cg := create c group (optional limits)
-...
-// cgFD := open fd to c group directory
-...
-cmd = exec.Command(command, args...)
-// set pgid (allows sigterm to whole group id)
-// set c group fd so the process gets added to the c group
-cmd.SysProcAttr = &syscall.SysProcAttr{
-    Setpgid:     true,
+pids.max = 1000
+```
+
+### Creation
+
+All jobs will be put under a cgroup. Each subprocess of the main process will be assigned the same process group id. Each job will be assigned a uuid for their id. Creating a job under a cgroup looks similar to this:
+
+```
+j := Job{...}
+cgFD := createCgroup(j.id, j.limits)
+
+j.cmd = exec.Command(j.command, j.args...)
+j.cmd.Stdout = j.output
+j.cmd.Stderr = j.output
+j.cmd.SysProcAttr = &unix.SysProcAttr{
+	Setpgid:     true,
 	UseCgroupFD: true,
 	CgroupFD:    cgFD,
 }
-// handle piping stdout and such
-...
-// start the command
-cmd.Start()
-```
 
-Each job will be assigned a uuid for their id.
+j.cmd.Start()
+```
 
 ### Authorization
 
@@ -141,72 +167,210 @@ After a job is started it can be managed (stop, get, and attach). There will be 
 
 ### Output
 
-Job output is a combination of the stdout and stderr to a pipe and will be stored as raw bytes. There will be an async read on the process that will store the read data into the job's output buffer.
+Job output is a combination of the stdout and stderr and will be stored as raw bytes.
 
 NOTE: there is no cap on the output buffer size.
 
-When an `AttachJob` stream is initialized, the job will add a watcher for that client stream. The watcher will keep track of where it has read on the job's output buffer. The watcher will have a `watcher.nextChunk()` method that it waits on. Here is some pseudocode of the watcher:
+When an [Attach](#attach) command is initialized, the job will return a `io.Reader` that will start reading at the beginning of the job's output. The reader will keep track of its offset in the job's output so data will never be lost. This is a simplified flow of how it will work:
 
 ```
-job:
-    append chunk to output
-    sync.Cond.broadcast
+// Job writes output to a byte buffer and notifies readers via a channel.
+outputBuffer.Write(data):
+    add data to buf
+    close(notifyChan)
+    notifyChan = make(chan)
 
-attach:
-    defer sync.Cond.activate
-    watcher loop
+outputBuffer.Close():
+    closed = true
+    close(notifyChan)
 
-watcher loop:
-    chunk, ok = watcher.nextChunk(ctx)
-    if !ok then return (job exited or client disconnected)
-    stream.send(chunk)
+// Each client gets a reader with its own offset.
+AttachJob(stream):
+    reader = job.NewReader(stream.Context())
+    // 4KB chunks
+    buf := make([]byte, 4096)
+    for {
+        count, err = reader.Read(buf)
+        if count > 0: stream.Send(buf[:count])
+        if err: return
+    }
 
-nextChunk:
-    while pos >= job.output.len
-        if cancelled or job done return nil, false
-        sync.Cond.wait
+outputReader.Read(buf):
+    for {
+        // new data available
+        if offset < len(outputBuffer.buf):
+            copy into buf, advance offset
+            return count, nil
 
-    chunk = job.output[pos]
-    pos++
-    return chunk, true
+        if ob.closed:
+            return 0, EOF
+
+        select {
+        case <-notifyChan:
+            // notified so loop back and find out why
+        case <-ctx.Done():
+            // client disconnected
+            return 0, ctx.Err()
+        }
+    }
 ```
 
 ### Cleanup
 
-When a stop is triggered, a cgroup kill will happen.
+When a [Stop](#stop) command is triggered the process group receives a SIGTERM followed up by a cgroup kill.
+
+On server shutdown, all running jobs go through the same SIGTERM then cgroup kill flow in parallel.
 
 ## Taskerctl
 
-Taskerctl will provide commands to generate Tasker certs and manage jobs.
+Taskerctl will provide commands to generate Tasker certs, manage jobs and start a Tasker server.
 
 ### Usage
 
 ```
-CLI client for Tasker job service
+taskerctl manages the Tasker job service
 
 Usage:
   taskerctl [command]
 
 Available Commands:
-  attach      Attach to a job's output
   cert        Manage TLS certificates
-  get         Get a job's status
   help        Help about any command
-  start       Start a new job
-  stop        Stop a running job
+  job         Manage jobs
+  server      Start the Tasker server
 
 Flags:
-  -h, --help   help for taskerctl
+  -C, --certs-dir string   Certificate directory (default "certs")
+  -h, --help               help for taskerctl
 
 Use "taskerctl [command] --help" for more information about a command.
 ```
 
-### Start
-
-Start a new job on the server. Resource limits are optional.
+### Cert
 
 ```
-$ taskerctl start -u wolf -a localhost:50051 /usr/bin/sleep 60
+Manage TLS certificates
+
+Usage:
+  taskerctl cert [command]
+
+Available Commands:
+  ca          Generate a new CA
+  client      Generate a client certificate
+  server      Generate a server certificate
+
+Flags:
+  -h, --help   help for cert
+
+Global Flags:
+  -C, --certs-dir string   Certificate directory (default "certs")
+
+Use "taskerctl cert [command] --help" for more information about a command.
+```
+
+### Job
+
+```
+Manage jobs
+
+Usage:
+  taskerctl job [command]
+
+Available Commands:
+  attach      Attach to a job's output
+  get         Get a job's status
+  start       Start a new job
+  stop        Stop a running job
+
+Flags:
+  -a, --addr string   Server address (e.g. localhost:50051)
+  -h, --help          help for job
+  -u, --user string   User name
+
+Global Flags:
+  -C, --certs-dir string   Certificate directory (default "certs")
+
+Use "taskerctl job [command] --help" for more information about a command.
+```
+
+#### Attach
+
+```
+Attach to a job's output
+
+Usage:
+  taskerctl job attach <id> [flags]
+
+Flags:
+  -h, --help   help for attach
+
+Global Flags:
+  -a, --addr string        Server address (e.g. localhost:50051)
+  -C, --certs-dir string   Certificate directory (default "certs")
+  -u, --user string        User name
+```
+
+Example:
+
+```
+$ taskerctl job attach -u wolf -a localhost:50051 a1b2c3d4-e5f6-7890-abcd-ef1234567890
+<data stream>
+```
+
+#### Get
+
+```
+Get a job's status
+
+Usage:
+  taskerctl job get <id> [flags]
+
+Flags:
+  -h, --help   help for get
+
+Global Flags:
+  -a, --addr string        Server address (e.g. localhost:50051)
+  -C, --certs-dir string   Certificate directory (default "certs")
+  -u, --user string        User name
+```
+
+Example:
+
+```
+$ taskerctl job get -u wolf -a localhost:50051 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+id: 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+owner: wolf
+command: /usr/bin/sleep
+args: [60]
+phase: completed
+```
+
+#### Start
+
+```
+Start a new job
+
+Usage:
+  taskerctl job start [flags] <command> [args...]
+
+Flags:
+  -c, --cpu float32     CPU limit in cores (e.g. 0.5)
+  -d, --device string   Block device for IO limits (e.g. /dev/sda)
+  -h, --help            help for start
+  -m, --memory uint32   Memory limit in MB (e.g. 512)
+  -r, --read uint32     IO read limit in MB/s (requires -d)
+  -w, --write uint32    IO write limit in MB/s (requires -d)
+
+Global Flags:
+  -a, --addr string        Server address (e.g. localhost:50051)
+  -C, --certs-dir string   Certificate directory (default "certs")
+  -u, --user string        User name
+```
+
+Example:
+
+```
+$ taskerctl job start -u wolf -a localhost:50051 /usr/bin/sleep 60
 id: 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
 owner: wolf
 command: /usr/bin/sleep
@@ -217,7 +381,7 @@ phase: running
 With resource limits:
 
 ```
-$ taskerctl start -u wolf -a localhost:50051 -c 0.5 -m 512 -d /dev/sda -r 100 -w 50 /usr/bin/my-app
+$ taskerctl job start -u wolf -a localhost:50051 -c 0.5 -m 512 -d /dev/sda -r 100 -w 50 /usr/bin/my-app
 id: a1b2c3d4-e5f6-7890-abcd-ef1234567890
 owner: wolf
 command: /usr/bin/my-app
@@ -230,12 +394,29 @@ io read limit: 100 MB/s
 io write limit: 50 MB/s
 ```
 
-### Stop
+#### Stop
 
-Stop a running job. Stopping a stopped/completed job is idempotent (it will return the job details but no error).
+Stopping a stopped/completed job is idempotent (it will return the job details but no error).
 
 ```
-$ taskerctl stop -u wolf -a localhost:50051 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
+Stop a running job
+
+Usage:
+  taskerctl job stop <id> [flags]
+
+Flags:
+  -h, --help   help for stop
+
+Global Flags:
+  -a, --addr string        Server address (e.g. localhost:50051)
+  -C, --certs-dir string   Certificate directory (default "certs")
+  -u, --user string        User name
+```
+
+Example:
+
+```
+$ taskerctl job stop -u wolf -a localhost:50051 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
 id: 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
 owner: wolf
 command: /usr/bin/sleep
@@ -243,49 +424,19 @@ args: [60]
 phase: stopped
 ```
 
-### Get
-
-Get a job's current status.
+### Server
 
 ```
-$ taskerctl get -u wolf -a localhost:50051 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
-id: 3f8a1b2c-9d4e-4f5a-b6c7-8d9e0f1a2b3c
-owner: wolf
-command: /usr/bin/sleep
-args: [60]
-phase: completed
-```
+Start the Tasker server
 
-### Attach
+Usage:
+  taskerctl server [flags]
 
-Attach to a job's output stream. Streams stdout and stderr (with recall of past data).
+Flags:
+  -a, --addr string   Listen address (e.g. :8080) (default ":50051")
+  -h, --help          help for server
+  -n, --name string   Server name (cert name) (default "wolfpack1")
 
-```
-$ taskerctl attach -u wolf -a localhost:50051 a1b2c3d4-e5f6-7890-abcd-ef1234567890
-<data stream>
-```
-
-### Cert
-
-Generate TLS certificates for Tasker.
-
-#### Cert CA
-
-```
-taskerctl cert ca
-```
-
-#### Cert Client
-
-```
-# admin role
-taskerctl cert client -u wolf -r admin
-# user role
-taskerctl cert client -u wolfjr -r user
-```
-
-#### Cert Server
-
-```
-taskerctl cert server -n tasker1 -H localhost,192.168.1.1
+Global Flags:
+  -C, --certs-dir string   Certificate directory (default "certs")
 ```
