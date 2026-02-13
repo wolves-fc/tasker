@@ -73,7 +73,7 @@ func (s *Server) StopJob(ctx context.Context, req *taskerpb.StopJobRequest) (*ta
 		return nil, status.Errorf(codes.NotFound, "job not found (id=%s)", req.Id)
 	}
 
-	if err := checkJobAccess(identity, j); err != nil {
+	if err := checkJobAccess(identity, j.Owner()); err != nil {
 		return nil, err
 	}
 
@@ -104,7 +104,7 @@ func (s *Server) GetJob(ctx context.Context, req *taskerpb.GetJobRequest) (*task
 		return nil, status.Errorf(codes.NotFound, "job not found (id=%s)", req.Id)
 	}
 
-	if err := checkJobAccess(identity, j); err != nil {
+	if err := checkJobAccess(identity, j.Owner()); err != nil {
 		return nil, err
 	}
 
@@ -125,7 +125,7 @@ func (s *Server) AttachJob(req *taskerpb.AttachJobRequest, stream grpc.ServerStr
 		return status.Errorf(codes.NotFound, "job not found (id=%s)", req.Id)
 	}
 
-	if err := checkJobAccess(identity, j); err != nil {
+	if err := checkJobAccess(identity, j.Owner()); err != nil {
 		return err
 	}
 
@@ -153,13 +153,13 @@ func (s *Server) AttachJob(req *taskerpb.AttachJobRequest, stream grpc.ServerStr
 // checkJobAccess verifies the identity can manage the given job.
 //
 // Admins can manage any job; users can only manage their own.
-func checkJobAccess(id rpc.Identity, j *job.Job) error {
+func checkJobAccess(id rpc.Identity, owner string) error {
 	if id.Role == tls.RoleAdmin {
 		return nil
 	}
 
-	if j.Owner() != id.Name {
-		return status.Errorf(codes.PermissionDenied, "user %s cannot manage job owned by %s", id.Name, j.Owner())
+	if owner != id.Name {
+		return status.Errorf(codes.PermissionDenied, "user %s cannot manage job owned by %s", id.Name, owner)
 	}
 	return nil
 }
