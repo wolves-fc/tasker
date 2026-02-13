@@ -41,6 +41,16 @@ tasks:
     cmds:
       - go test -v -race -cover ./...
 
+  test:integration:
+    desc: Run integration tests (requires root and cgroup v2)
+    cmds:
+      - sudo env "PATH=$PATH" go test -tags integration -race -cover -count=1 ./...
+
+  test:integration:verbose:
+    desc: Run integration tests (requires root and cgroup v2)
+    cmds:
+      - sudo env "PATH=$PATH" go test -tags integration -race -cover -v -count=1 ./...
+
   vulnerability:
     desc: Check for known security vulnerabilities
     cmds:
