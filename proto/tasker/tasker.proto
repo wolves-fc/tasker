@@ -1,0 +1,111 @@
+syntax = "proto3";
+
+package tasker;
+
+option go_package = "github.com/wolves-fc/tasker/gen/proto/tasker";
+
+// TaskerService defines RPCs for managing jobs on a server.
+service TaskerService {
+  // StartJob creates and starts a new job.
+  rpc StartJob(StartJobRequest) returns (StartJobResponse);
+  // StopJob triggers a running job to stop.
+  rpc StopJob(StopJobRequest) returns (StopJobResponse);
+  // GetJob returns a job.
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  // AttachJob opens a stream for job output (stdout/stderr).
+  rpc AttachJob(AttachJobRequest) returns (stream AttachJobResponse);
+}
+
+// JobPhase represents the lifecycle of a job.
+enum JobPhase {
+  // Unknown or unset phase.
+  JOB_PHASE_UNSPECIFIED = 0;
+  // Job is running.
+  JOB_PHASE_RUNNING = 1;
+  // Job was manually stopped.
+  JOB_PHASE_STOPPED = 2;
+  // Job exited on its own.
+  JOB_PHASE_COMPLETED = 3;
+}
+
+// ResourceLimits holds optional resource limits for a job.
+message ResourceLimits {
+  // CPU limit in cores.
+  optional float cpu = 1;
+  // Memory limit in MB.
+  optional uint32 memory = 2;
+  // IO limits for a block device.
+  optional IOLimits io = 3;
+}
+
+// IOLimits holds IO limits for a block device.
+message IOLimits {
+  // Block device path.
+  string device = 1;
+  // Read limit in MB/s.
+  optional uint32 read = 2;
+  // Write limit in MB/s.
+  optional uint32 write = 3;
+}
+
+// Job represents a managed process.
+message Job {
+  // Unique ID.
+  string id = 1;
+  // User who started this job.
+  string owner = 2;
+  // Path to the executable.
+  string command = 3;
+  // Arguments to the executable.
+  repeated string args = 4;
+  // Current lifecycle phase.
+  JobPhase phase = 5;
+  // Resource limits (optional).
+  ResourceLimits limits = 6;
+}
+
+// StartJobRequest contains what is needed to create and start a job.
+message StartJobRequest {
+  // Path to the executable.
+  string command = 1;
+  // Arguments to the executable.
+  repeated string args = 2;
+  // Resource limits (optional).
+  ResourceLimits limits = 3;
+}
+
+// StartJobResponse contains the started job.
+message StartJobResponse {
+  Job job = 1;
+}
+
+// StopJobRequest identifies the job to stop.
+message StopJobRequest {
+  string id = 1;
+}
+
+// StopJobResponse contains the stopped job.
+message StopJobResponse {
+  Job job = 1;
+}
+
+// GetJobRequest identifies the job to get.
+message GetJobRequest {
+  string id = 1;
+}
+
+// GetJobResponse contains the requested job.
+message GetJobResponse {
+  Job job = 1;
+}
+
+// AttachJobRequest identifies the job to attach to.
+message AttachJobRequest {
+  string id = 1;
+}
+
+// AttachJobResponse is output data from the requested job.
+message AttachJobResponse {
+  // Raw output bytes from the job's stdout/stderr.
+  bytes data = 1;
+}
